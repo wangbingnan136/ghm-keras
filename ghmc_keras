@@ -1,0 +1,51 @@
+import tensorflow as tf
+from keras import backend as K
+from keras.models import Sequential
+from keras.layers import Dense
+def GHMC_Loss(Bins=10,momentum=0,batch_size=100):
+    global edges,mmt,bins,shape ## 
+    shape=batch_size
+    bins=Bins
+    edges = [float(x) / bins for x in range(bins+1)]
+    edges[-1] += 1e-6
+    mmt=momentum
+    if momentum > 0:
+        acc_sum = [0.0 for _ in range(bins)]
+    def GHMC_Loss_fixed(y_true,y_pred):
+        y_true=tf.cast(y_true,tf.float32)
+        weights=tf.py_func(GHMC_loss_pyfunc,[y_true,y_pred],tf.float32)
+        weights=tf.reshape(weights,[shape]) 
+        return tf.nn.weighted_cross_entropy_with_logits(targets=y_true,logits=y_pred,pos_weight=weights)
+
+    return GHMC_Loss_fixed
+    
+def GHMC_loss_pyfunc(y_true,y_pred): 
+    weights=np.zeros(shape)
+    g=np.abs(y_true-y_pred) 
+    tot=len(y_pred)
+    n=0
+    for i in range(bins):
+        inds=(g >= edges[i]) & (g < edges[i+1])
+        num_in_bin = inds.sum().item()
+        if num_in_bin > 0:
+            if momentum > 0:
+                acc_sum[i] = momentum * acc_sum[i]+ (1 - mmt) * num_in_bin
+                weights[inds.flatten()] = tot / acc_sum[i]          
+            else:
+                weights[inds.flatten()] = tot / num_in_bin ##N/GD(gi) 
+            n += 1
+    if n>0:
+        weights = weights / n  
+
+    return weights.astype('float32')
+    
+if __name__=='main':
+    from sklearn.datasets import load_breast_cancer
+    X=load_breast_cancer().data
+    y=load_breast_cancer().target
+    model = Sequential()
+    model.add(Dense(60, input_dim=30, kernel_initializer='normal', activation='relu'))
+    model.add(Dense(1,  activation='sigmoid'))
+    model.compile(loss=GHMC_Loss(Bins=10,momentum=0,batch_size=569), optimizer='adam', metrics=['accuracy'])
+    model.fit(X,y,epochs=100,batch_size=569)
+    
